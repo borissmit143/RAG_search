@@ -70,7 +70,12 @@ def read_demographics(uploaded_file):
 
 def read_queries(uploaded_file):
     text = uploaded_file.getvalue().decode("utf-8-sig")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    queries = []
+    for line in text.splitlines():
+        query = line.strip().rstrip(",").strip().strip('"').strip("'")
+        if query:
+            queries.append(query)
+    return queries
 
 
 def safe_name(filename):
@@ -109,6 +114,8 @@ BRAND_RANKINGS_JSON: []"""
 
 def index_pdf(client, pdf_path, original_name, status):
     category = safe_name(original_name)
+    status.write(f"Creating a search index for **{original_name}**…")
+    print(f"Creating Gemini File Search store for {original_name}", flush=True)
     store = client.file_search_stores.create(
         config={"display_name": f"streamlit_{category}_{int(time.time())}"}
     )
@@ -424,9 +431,20 @@ if query_file is not None:
 
 ready = bool(api_key and pdf_files and queries and demographics is not None)
 if st.button("Run file search", type="primary", disabled=not ready):
-    client = genai.Client(api_key=api_key)
-    frame = run_pipeline(client, pdf_files, queries, demographics)
-    st.session_state["results"] = frame
+    st.session_state.pop("results", None)
+    st.info("Request received. Starting Gemini File Search…")
+    print(
+        f"Run requested: {len(pdf_files)} PDF(s), {len(queries)} query/queries",
+        flush=True,
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        frame = run_pipeline(client, pdf_files, queries, demographics)
+        st.session_state["results"] = frame
+    except Exception as error:
+        print(f"Unhandled search error: {error!r}", flush=True)
+        st.error("The search stopped because of an error:")
+        st.exception(error)
 
 if "results" in st.session_state:
     result_frame = st.session_state["results"]
