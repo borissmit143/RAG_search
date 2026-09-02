@@ -117,7 +117,10 @@ def index_pdf(client, pdf_path, original_name, status):
     status.write(f"Creating a search index for **{original_name}**…")
     print(f"Creating Gemini File Search store for {original_name}", flush=True)
     store = client.file_search_stores.create(
-        config={"display_name": f"streamlit_{category}_{int(time.time())}"}
+        config={
+            "display_name": f"streamlit_{category}_{int(time.time())}",
+            "embedding_model": "models/gemini-embedding-001",
+        }
     )
     status.write(f"Uploading **{original_name}** to Gemini Files…")
     uploaded_file = client.files.upload(
@@ -138,7 +141,18 @@ def index_pdf(client, pdf_path, original_name, status):
             raise TimeoutError(f"Indexing {original_name} exceeded {POLL_TIMEOUT}s")
         status.write(f"Indexing **{original_name}** — {elapsed:.0f}s elapsed…")
         time.sleep(POLL_INTERVAL)
-        operation = client.operations.get(operation)
+        try:
+            operation = client.operations.get(operation)
+        except Exception as error:
+            error_text = str(error).upper()
+            if "503" in error_text or "UNAVAILABLE" in error_text or "429" in error_text:
+                print(f"Temporary indexing poll error: {error!r}", flush=True)
+                status.warning(
+                    f"Gemini indexing is temporarily busy; still waiting for "
+                    f"**{original_name}**…"
+                )
+                continue
+            raise
 
     if getattr(operation, "error", None):
         raise RuntimeError(f"Indexing {original_name} failed: {operation.error}")
@@ -287,7 +301,12 @@ def run_pipeline(client, pdf_files, queries, demographics):
                 completed += 1
                 progress.progress(completed / total, text=f"{completed}/{total} searches")
 
-    status.success("Search complete.")
+    if results and all(result.get("error") for result in results):
+        status.error("No searches ran because PDF indexing failed.")
+    elif any(result.get("error") for result in results):
+        status.warning("Search finished with some errors. Review the error column.")
+    else:
+        status.success("Search complete.")
     return pd.DataFrame(results)
 
 
