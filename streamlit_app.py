@@ -23,6 +23,7 @@ PERSONA_NAME = "sus"
 DEFAULT_DEMOGRAPHICS = Path(__file__).with_name("twin_imp_columns.csv")
 POLL_INTERVAL = 3
 POLL_TIMEOUT = 1200
+UPLOAD_ATTEMPTS = 3
 
 st.set_page_config(page_title="Gemini PDF Search", page_icon="🔎", layout="wide")
 
@@ -119,12 +120,30 @@ def index_pdf(client, pdf_path, original_name, status):
     store = client.file_search_stores.create(
         config={"display_name": f"streamlit_{category}_{int(time.time())}"}
     )
-    status.write(f"Uploading and indexing **{original_name}**…")
-    operation = client.file_search_stores.upload_to_file_search_store(
-        file=str(pdf_path),
-        file_search_store_name=store.name,
-        config={"display_name": original_name},
-    )
+    operation = None
+    for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+        status.write(
+            f"Uploading and indexing **{original_name}** "
+            f"(attempt {attempt}/{UPLOAD_ATTEMPTS})…"
+        )
+        try:
+            operation = client.file_search_stores.upload_to_file_search_store(
+                file=str(pdf_path),
+                file_search_store_name=store.name,
+                config={"display_name": original_name},
+            )
+            break
+        except Exception as error:
+            print(
+                f"Upload attempt {attempt} failed for {original_name}: {error!r}",
+                flush=True,
+            )
+            if attempt == UPLOAD_ATTEMPTS:
+                raise
+            time.sleep(attempt * 2)
+
+    if operation is None:
+        raise RuntimeError(f"Upload did not start for {original_name}")
 
     started = time.monotonic()
     while not operation.done:
